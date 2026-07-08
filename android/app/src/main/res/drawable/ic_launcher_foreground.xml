@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Background circle -->
+    <path
+        android:fillColor="#E94560"
+        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0"/>
+    <!-- S letter for SpaceBrowser -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,38c0,-3.3 2.7,-6 6,-6h4c3.3,0 6,2.7 6,6v2c0,3.3 -2.7,6 -6,6h-4c-3.3,0 -6,2.7 -6,6v2c0,3.3 2.7,6 6,6h4c3.3,0 6,-2.7 6,-6"
+        android:strokeWidth="3"
+        android:strokeColor="#FFFFFF"
+        android:fillColor="#00000000"/>
+</vector>

@@ -1,22 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  SpaceBrowser Android — Application Manifest
-  =============================================================================
-  Declares permissions, application class, and the main browser activity.
-  Hardware acceleration is required for GeckoView rendering.
--->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Network permissions for web browsing -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
-    <!-- Optional: download files to external storage -->
-    <uses-permission
-        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28"
-        tools:ignore="ScopedStorage" />
 
     <application
         android:name=".SpaceBrowserApp"
@@ -32,7 +19,6 @@
         android:usesCleartextTraffic="false"
         tools:targetApi="34">
 
-        <!-- Main browser activity -->
         <activity
             android:name=".browser.SpaceBrowserActivity"
             android:configChanges="orientation|screenSize|keyboard|keyboardHidden|screenLayout|smallestScreenSize"
@@ -45,7 +31,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Handle web URLs -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
