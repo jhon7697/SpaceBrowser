@@ -1,0 +1,927 @@
+# =============================================================================
+# Per-Space Fingerprint Resistance — Detailed Patch Guide
+# =============================================================================
+#
+# This document describes the exact modifications needed to make Firefox's
+# fingerprint resistance (RFP) work per-container instead of globally.
+#
+# In vanilla Firefox, `privacy.resistFingerprinting` is a single boolean pref.
+# When enabled, it applies the SAME fingerprint spoofing to ALL tabs. This is
+# fine for privacy, but useless for anti-detect because every tab looks identical.
+#
+# SpaceBrowser needs each Space (container) to have its OWN fingerprint profile:
+# different canvas noise, different WebGL values, different navigator properties.
+#
+# This patch modifies 7 core Firefox source files to achieve this.
+#
+# =============================================================================
+
+# =============================================================================
+# FILE 1: toolkit/components/resistfingerprinting/nsRFPService.h
+# =============================================================================
+#
+# WHAT IT DOES NOW:
+#   nsRFPService is the central fingerprint resistance service. It's a singleton
+#   that all fingerprinting-sensitive code queries to determine if/how to spoof
+#   values. Currently it stores a single global state: enabled/disabled.
+#
+# WHAT WE CHANGE:
+#   Add a per-container fingerprint profile cache and lookup methods.
+#   When code asks "should I resist fingerprinting?", it can now also pass
+#   an OriginAttributes (which contains userContextId) to get container-specific
+#   fingerprint configuration.
+#
+
+--- a/toolkit/components/resistfingerprinting/nsRFPService.h
++++ b/toolkit/components/resistfingerprinting/nsRFPService.h
+@@ -15,6 +15,8 @@
+ #include "nsString.h"
+ #include "nsTHashMap.h"
++#include "mozilla/dom/DOMTypes.h"
++#include <unordered_map>
+
+ // Forward declarations
+ class nsIPrefBranch;
+@@ -25,6 +27,43 @@ namespace mozilla {
+
++/**
++ * SpaceFingerprintProfile — per-container fingerprint configuration.
++ *
++ * Each Space (container) gets its own profile that determines what values
++ * are returned for canvas noise, WebGL queries, navigator properties, etc.
++ *
++ * These profiles are loaded from SpaceIdentityService.sys.mjs at startup
++ * and cached here in C++ for fast access from hot paths like canvas rendering.
++ */
++struct SpaceFingerprintProfile {
++  // Identification
++  uint32_t userContextId;
++
++  // Canvas fingerprinting
++  uint32_t canvasNoiseSeed;      // Deterministic noise seed for canvas operations
++  float canvasNoiseAmplitude;    // How much noise to add (0.0 - 1.0)
++
++  // Audio fingerprinting
++  uint32_t audioNoiseSeed;
++  float audioNoiseAmplitude;
++  uint32_t audioSampleRate;
++
++  // WebGL
++  nsCString webglVendor;         // UNMASKED_VENDOR_WEBGL value
++  nsCString webglRenderer;       // UNMASKED_RENDERER_WEBGL value
++  uint32_t maxTextureSize;
++
++  // Navigator properties
++  nsCString userAgent;
++  nsCString platform;
++  nsCString oscpu;
++  uint32_t hardwareConcurrency;
++  uint32_t deviceMemory;
++
++  // Screen
++  uint32_t screenWidth;
++  uint32_t screenHeight;
++};
++
+ class nsRFPService final : public nsIObserver, public nsIRFPService {
+  public:
+   NS_DECL_ISUPPORTS
+@@ -40,6 +79,39 @@ class nsRFPService final : public nsIObserver, public nsIRFPService {
+   static bool IsResistFingerprintingEnabled();
+
++  /**
++   * Check if per-space fingerprinting is active for a given container.
++   *
++   * @param aUserContextId  The container ID (from OriginAttributes)
++   * @return true if this container has a fingerprint profile
++   */
++  static bool HasSpaceProfile(uint32_t aUserContextId);
++
++  /**
++   * Get the fingerprint profile for a container.
++   * Returns nullptr if no profile exists (fall back to global RFP or no RFP).
++   *
++   * @param aUserContextId  The container ID
++   * @return Pointer to cached profile, or nullptr
++   */
++  static const SpaceFingerprintProfile* GetSpaceProfile(uint32_t aUserContextId);
++
++  /**
++   * Register/update a fingerprint profile for a container.
++   * Called from JS (SpaceIdentityService) when spaces are created/updated.
++   *
++   * @param aProfile  The profile to register (copied into the cache)
++   */
++  static void RegisterSpaceProfile(const SpaceFingerprintProfile& aProfile);
++
++  /**
++   * Remove a fingerprint profile (when a space is deleted).
++   */
++  static void UnregisterSpaceProfile(uint32_t aUserContextId);
++
++  /**
++   * Apply canvas noise for a specific space.
++   * Used by CanvasRenderingContext2D to add deterministic pixel noise.
++   *
++   * @param aData      Pixel data buffer (RGBA)
++   * @param aLength    Buffer length in bytes
++   * @param aSeed      Noise seed from the space's profile
++   * @param aAmplitude Noise amplitude
++   */
++  static void ApplyCanvasNoise(uint8_t* aData, uint32_t aLength,
++                                uint32_t aSeed, float aAmplitude);
++
+  private:
+   ~nsRFPService() = default;
++
++  // Per-space fingerprint profile cache
++  // Key: userContextId, Value: SpaceFingerprintProfile
++  static std::unordered_map<uint32_t, SpaceFingerprintProfile> sSpaceProfiles;
++  static mozilla::Mutex sProfilesMutex;
+ };
+
+
+# =============================================================================
+# FILE 2: toolkit/components/resistfingerprinting/nsRFPService.cpp
+# =============================================================================
+#
+# WHAT IT DOES NOW:
+#   Implements the global RFP service. Key methods:
+#   - IsResistFingerprintingEnabled() — checks the single global pref
+#   - GetSpoofedUserAgent() — returns a generic spoofed UA
+#   - Various spoofing utilities (timezone, locale, etc.)
+#
+# WHERE TO FIND KEY FUNCTIONS:
+#   - Line ~150: IsResistFingerprintingEnabled()
+#   - Line ~300: GetSpoofedUserAgent()
+#   - Line ~500: ReduceTimePrecision() — timestamp fuzzing
+#
+# WHAT WE CHANGE:
+#   Add the per-space profile cache and lookup implementation.
+#   Add the canvas noise application function.
+#   Make GetSpoofedUserAgent() accept an optional userContextId.
+#
+
+--- a/toolkit/components/resistfingerprinting/nsRFPService.cpp
++++ b/toolkit/components/resistfingerprinting/nsRFPService.cpp
+@@ -45,6 +45,10 @@
++#include "SpaceIdentityService.h"  // Our JSM bridge header
++
+ using namespace mozilla;
+
++// Static member initialization
++std::unordered_map<uint32_t, SpaceFingerprintProfile> nsRFPService::sSpaceProfiles;
++mozilla::Mutex nsRFPService::sProfilesMutex("nsRFPService::sProfilesMutex");
++
+ // --------------------------------------------------------------------------
+ // Per-Space Profile Management
+ // --------------------------------------------------------------------------
+
++/* static */
++bool nsRFPService::HasSpaceProfile(uint32_t aUserContextId) {
++  MutexAutoLock lock(sProfilesMutex);
++  return sSpaceProfiles.find(aUserContextId) != sSpaceProfiles.end();
++}
++
++/* static */
++const SpaceFingerprintProfile* nsRFPService::GetSpaceProfile(
++    uint32_t aUserContextId) {
++  MutexAutoLock lock(sProfilesMutex);
++  auto it = sSpaceProfiles.find(aUserContextId);
++  if (it != sSpaceProfiles.end()) {
++    return &it->second;
++  }
++  return nullptr;
++}
++
++/* static */
++void nsRFPService::RegisterSpaceProfile(
++    const SpaceFingerprintProfile& aProfile) {
++  MutexAutoLock lock(sProfilesMutex);
++  sSpaceProfiles[aProfile.userContextId] = aProfile;
++
++  MOZ_LOG(gResistFingerprintingLog, LogLevel::Info,
++          ("Registered fingerprint profile for container %u",
++           aProfile.userContextId));
++}
++
++/* static */
++void nsRFPService::UnregisterSpaceProfile(uint32_t aUserContextId) {
++  MutexAutoLock lock(sProfilesMutex);
++  sSpaceProfiles.erase(aUserContextId);
++
++  MOZ_LOG(gResistFingerprintingLog, LogLevel::Info,
++          ("Unregistered fingerprint profile for container %u",
++           aUserContextId));
++}
++
++/**
++ * Apply deterministic noise to canvas pixel data.
++ *
++ * This is the core of per-space canvas fingerprinting. We use the space's
++ * noise seed to generate reproducible pixel modifications. The noise is
++ * subtle enough to be invisible to humans but changes the canvas hash.
++ *
++ * Algorithm:
++ *   For each pixel, use a seeded PRNG (Mulberry32) to generate a small
++ *   offset (-amplitude to +amplitude) and add it to each color channel.
++ *   The seed incorporates both the space's seed and the pixel position,
++ *   making the noise deterministic and unique per space.
++ */
++/* static */
++void nsRFPService::ApplyCanvasNoise(uint8_t* aData, uint32_t aLength,
++                                     uint32_t aSeed, float aAmplitude) {
++  if (!aData || aLength == 0 || aAmplitude == 0.0f) {
++    return;
++  }
++
++  // Mulberry32 PRNG — same algorithm as our JS implementation
++  auto mulberry32 = [](uint32_t& state) -> float {
++    state += 0x6D2B79F5;
++    uint32_t t = state;
++    t = (t ^ (t >> 15)) * (t | 1);
++    t ^= t + (t ^ (t >> 7)) * (t | 61);
++    return static_cast<float>((t ^ (t >> 14)) >> 0) / 4294967296.0f;
++  };
++
++  uint32_t state = aSeed;
++  const int maxOffset = static_cast<int>(aAmplitude * 255.0f);
++
++  // Process RGBA pixel data (4 bytes per pixel)
++  for (uint32_t i = 0; i < aLength; i += 4) {
++    // Only modify RGB channels, leave alpha untouched
++    for (int c = 0; c < 3; c++) {
++      float rand = mulberry32(state);
++      int offset = static_cast<int>((rand * 2.0f - 1.0f) * maxOffset);
++      int newVal = static_cast<int>(aData[i + c]) + offset;
++      // Clamp to [0, 255]
++      aData[i + c] = static_cast<uint8_t>(std::clamp(newVal, 0, 255));
++    }
++  }
++}
+
+
+# =============================================================================
+# FILE 3: dom/canvas/CanvasRenderingContext2D.cpp
+# =============================================================================
+#
+# WHAT IT DOES NOW:
+#   Implements the HTML Canvas 2D rendering context. Canvas fingerprinting works
+#   by drawing specific shapes/text, then reading back the pixel data with
+#   toDataURL() or getImageData(). Subtle rendering differences between GPUs/
+#   drivers create a unique fingerprint.
+#
+#   When `privacy.resistFingerprinting` is enabled, Firefox returns a blank
+#   or randomized canvas for toDataURL() calls.
+#
+# WHERE TO FIND KEY FUNCTIONS:
+#   - CanvasRenderingContext2D::GetImageData() — line ~4500
+#     This is called when JS reads pixel data. RFP check happens here.
+#   - CanvasRenderingContext2D::ToDataURL() — line ~1200
+#     Converts canvas to data URL. Also checks RFP.
+#
+# WHAT WE CHANGE:
+#   Instead of blanking the canvas (which is detectable!), we add per-space
+#   noise to the pixel data. Each space gets unique but consistent noise,
+#   so the canvas fingerprint looks "real" but is different per space.
+#
+
+--- a/dom/canvas/CanvasRenderingContext2D.cpp
++++ b/dom/canvas/CanvasRenderingContext2D.cpp
+@@ -85,6 +85,7 @@
+ #include "nsRFPService.h"
++#include "nsRFPService.h"  // For SpaceFingerprintProfile + ApplyCanvasNoise
+
+ // ...existing includes...
+
+ /**
+  * GetImageData — reads pixel data from the canvas.
+  *
+  * ORIGINAL BEHAVIOR:
+  *   If privacy.resistFingerprinting is enabled globally, this returns
+  *   a zeroed-out (blank) ImageData. This is effective but DETECTABLE —
+  *   websites can check if the canvas is blank and know you're using RFP.
+  *
+  * SPACEBROWSER BEHAVIOR:
+  *   If the requesting tab is in a Space with a fingerprint profile, we
+  *   let the real canvas data through but apply deterministic noise using
+  *   the space's noise seed. This makes each space have a unique but
+  *   realistic canvas fingerprint.
+  */
+ void CanvasRenderingContext2D::GetImageData(
+     int32_t aSx, int32_t aSy, int32_t aSw, int32_t aSh,
+     nsIPrincipal& aSubjectPrincipal,
+     ErrorResult& aError) {
+
+   // ... existing dimension validation code ...
+
++  // === SPACEBROWSER MODIFICATION START ===
++  //
++  // Check if the requesting document is in a Space container.
++  // If so, apply per-space canvas noise instead of global RFP behavior.
++  //
++  uint32_t userContextId = 0;
++  bool hasSpaceProfile = false;
++
++  // Get the userContextId from the document's origin attributes
++  if (mCanvasElement) {
++    nsIDocument* doc = mCanvasElement->OwnerDoc();
++    if (doc) {
++      nsIPrincipal* principal = doc->NodePrincipal();
++      if (principal) {
++        userContextId = principal->OriginAttributesRef().mUserContextId;
++        hasSpaceProfile = nsRFPService::HasSpaceProfile(userContextId);
++      }
++    }
++  }
++
++  if (hasSpaceProfile) {
++    // We have a space-specific fingerprint profile.
++    // Let the real canvas data through, then apply deterministic noise.
++    const SpaceFingerprintProfile* profile =
++        nsRFPService::GetSpaceProfile(userContextId);
++
++    if (profile) {
++      // Read the real pixel data first
++      // (existing code path for non-RFP case)
++      RefPtr<DataSourceSurface> readback = GetSurfaceSnapshot();
++      if (readback) {
++        DataSourceSurface::ScopedMap map(readback, DataSourceSurface::READ_WRITE);
++        if (map.IsMapped()) {
++          // Apply per-space noise to the pixel data
++          nsRFPService::ApplyCanvasNoise(
++            map.GetData(),
++            map.GetStride() * readback->GetSize().height,
++            profile->canvasNoiseSeed,
++            profile->canvasNoiseAmplitude
++          );
++
++          // Copy modified data to the output ImageData
++          // ... (copy to aImageData using existing helper) ...
++        }
++      }
++
++      // Skip the global RFP check below — we've handled it per-space
++      return;
++    }
++  }
++  // === SPACEBROWSER MODIFICATION END ===
+
+   // Original global RFP check (unchanged — used when no space profile exists)
+   if (nsRFPService::IsResistFingerprintingEnabled()) {
+     // ... existing blanking code ...
+   }
+ }
+
+
+# =============================================================================
+# FILE 4: dom/canvas/WebGLContext.cpp
+# =============================================================================
+#
+# WHAT IT DOES NOW:
+#   Implements the WebGL API. Key fingerprinting vectors:
+#   - UNMASKED_VENDOR_WEBGL / UNMASKED_RENDERER_WEBGL extensions reveal GPU info
+#   - Various getParameter() calls return hardware-specific values
+#
+#   When RFP is enabled, Firefox blocks the debug renderer info extension
+#   entirely, returning null for vendor/renderer queries.
+#
+# WHERE TO FIND KEY FUNCTIONS:
+#   - WebGLContext::GetParameter() — handles all glGetParameter queries
+#     Located in dom/canvas/WebGLContextState.cpp around line ~100
+#   - WEBGL_debug_renderer_info extension — dom/canvas/WebGLExtensions.cpp
+#
+# WHAT WE CHANGE:
+#   Instead of blocking the extension (detectable!), return per-space
+#   vendor/renderer strings that look like real hardware.
+#
+
+--- a/dom/canvas/WebGLContextState.cpp
++++ b/dom/canvas/WebGLContextState.cpp
+@@ -20,6 +20,7 @@
++#include "nsRFPService.h"
+
+ /**
+  * GetParameter — handles WebGL parameter queries.
+  *
+  * This is a massive switch statement that handles every possible
+  * GL parameter query. The fingerprinting-relevant ones are:
+  *
+  *   UNMASKED_VENDOR_WEBGL (0x9245)
+  *   UNMASKED_RENDERER_WEBGL (0x9246)
+  *   MAX_TEXTURE_SIZE (0x0D33)
+  *   MAX_RENDERBUFFER_SIZE (0x84E8)
+  *   MAX_VIEWPORT_DIMS (0x0D3A)
+  *
+  * ORIGINAL: Returns real GPU values, or blocks when RFP enabled.
+  * SPACEBROWSER: Returns per-space spoofed values.
+  */
+ void WebGLContext::GetParameter(JSContext* cx, GLenum pname,
+                                  JS::MutableHandleValue retval,
+                                  ErrorResult& rv) {
+   // ... existing validation code ...
+
++  // === SPACEBROWSER: Per-space WebGL spoofing ===
++  uint32_t userContextId = 0;
++  if (mCanvasElement) {
++    nsIDocument* doc = mCanvasElement->OwnerDoc();
++    if (doc && doc->NodePrincipal()) {
++      userContextId = doc->NodePrincipal()->OriginAttributesRef().mUserContextId;
++    }
++  }
++
++  const SpaceFingerprintProfile* spaceProfile =
++      nsRFPService::GetSpaceProfile(userContextId);
++
++  if (spaceProfile) {
++    switch (pname) {
++      case UNMASKED_VENDOR_WEBGL:
++        // Return the space's spoofed GPU vendor
++        retval.setString(JS_NewStringCopyZ(cx, spaceProfile->webglVendor.get()));
++        return;
++
++      case UNMASKED_RENDERER_WEBGL:
++        // Return the space's spoofed GPU renderer
++        retval.setString(JS_NewStringCopyZ(cx, spaceProfile->webglRenderer.get()));
++        return;
++
++      case LOCAL_GL_MAX_TEXTURE_SIZE:
++        // Return spoofed max texture size
++        retval.setInt32(spaceProfile->maxTextureSize);
++        return;
++
++      // Other parameters fall through to real values
++      // (most are not fingerprinting-relevant)
++    }
++  }
++  // === END SPACEBROWSER ===
+
+   switch (pname) {
+     // ... existing switch cases (unchanged) ...
+   }
+ }
+
+
+# =============================================================================
+# FILE 5: dom/media/webaudio/AudioContext.cpp
+# =============================================================================
+#
+# WHAT IT DOES NOW:
+#   Implements the Web Audio API. AudioContext fingerprinting works by
+#   creating an OscillatorNode → DynamicsCompressorNode → AnalyserNode
+#   pipeline and reading the output. Tiny floating-point differences in
+#   audio processing between hardware/drivers create a unique fingerprint.
+#
+#   When RFP is enabled, Firefox adds white noise to AudioContext output
+#   to mask these hardware differences.
+#
+# WHERE TO FIND KEY FUNCTIONS:
+#   - AudioContext::CreateBuffer() — line ~400
+#   - AudioContext::Constructor() — line ~200
+#   - Audio processing happens in MediaTrackGraph on a separate thread
+#   - RFP noise injection: dom/media/webaudio/AudioNodeEngine.cpp
+#     Function: AudioBufferAddNoise() around line ~50
+#
+# WHAT WE CHANGE:
+#   Use per-space audio noise seed instead of global random noise.
+#   This makes each space have a unique but consistent audio fingerprint.
+#
+
+--- a/dom/media/webaudio/AudioNodeEngine.cpp
++++ b/dom/media/webaudio/AudioNodeEngine.cpp
+@@ -10,6 +10,7 @@
++#include "nsRFPService.h"
+
+ /**
+  * AudioBufferAddNoise — adds noise to audio buffer for anti-fingerprinting.
+  *
+  * ORIGINAL BEHAVIOR:
+  *   When RFP is enabled globally, this adds random noise using a global
+  *   random seed. All containers get the same noise pattern.
+  *
+  * SPACEBROWSER BEHAVIOR:
+  *   Each Space gets deterministic noise from its own seed. This means:
+  *   - Same Space always produces the same audio fingerprint (consistent)
+  *   - Different Spaces produce different fingerprints (unique)
+  *   - The noise is subtle enough not to be audible
+  */
+ void AudioBufferAddNoise(float* aBuffer, uint32_t aLength,
++                          uint32_t aUserContextId) {
++
++  const SpaceFingerprintProfile* profile =
++      nsRFPService::GetSpaceProfile(aUserContextId);
++
++  if (profile) {
++    // Use per-space deterministic noise
++    uint32_t seed = profile->audioNoiseSeed;
++    float amplitude = profile->audioNoiseAmplitude;
++
++    // Mulberry32 PRNG (same as canvas noise)
++    auto mulberry32 = [](uint32_t& state) -> float {
++      state += 0x6D2B79F5;
++      uint32_t t = state;
++      t = (t ^ (t >> 15)) * (t | 1);
++      t ^= t + (t ^ (t >> 7)) * (t | 61);
++      return static_cast<float>((t ^ (t >> 14)) >> 0) / 4294967296.0f;
++    };
++
++    for (uint32_t i = 0; i < aLength; i++) {
++      float noise = (mulberry32(seed) * 2.0f - 1.0f) * amplitude;
++      aBuffer[i] += noise;
++    }
++    return;
++  }
++
++  // Fall back to global RFP behavior (original code)
+   if (!nsRFPService::IsResistFingerprintingEnabled()) {
+     return;
+   }
+   // ... existing global noise code ...
+ }
+
+
+# =============================================================================
+# FILE 6: netwerk/protocol/http/nsHttpHandler.cpp
+# =============================================================================
+#
+# WHAT IT DOES NOW:
+#   Manages HTTP protocol handling, including the User-Agent header.
+#   The UA string is set globally and sent with every request.
+#
+#   When RFP is enabled, Firefox uses a generic UA:
+#     "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0"
+#   This is the same for ALL tabs.
+#
+# WHERE TO FIND KEY FUNCTIONS:
+#   - nsHttpHandler::UserAgent() — line ~1400
+#     Returns the current UA string. Called for every HTTP request.
+#   - nsHttpHandler::InitUserAgentComponents() — line ~800
+#     Builds the UA string from components (OS, version, etc.)
+#   - nsHttpHandler::OnPrefChange() — line ~2000
+#     Handles pref changes including RFP
+#
+# WHAT WE CHANGE:
+#   Make UserAgent() accept an optional OriginAttributes parameter.
+#   When a request is associated with a container that has a space profile,
+#   return the space's custom UA instead of the global one.
+#
+
+--- a/netwerk/protocol/http/nsHttpHandler.cpp
++++ b/netwerk/protocol/http/nsHttpHandler.cpp
+@@ -50,6 +50,7 @@
++#include "nsRFPService.h"
+
+ /**
+  * UserAgent — returns the User-Agent string for HTTP requests.
+  *
+  * ORIGINAL: Returns a single global UA string.
+  * SPACEBROWSER: Checks if the request's channel has a container context
+  *               and returns a per-space UA if available.
+  */
+ const nsCString& nsHttpHandler::UserAgent() {
++  // This is called from nsHttpChannel::SetupUserAgent()
++  // which has access to the loadInfo and thus the OriginAttributes.
++  // We can't easily pass them here, so we override at the call site.
++  // See the modification to nsHttpChannel below.
+   return mUserAgent;
+ }
+
++/**
++ * NEW: Get per-space User-Agent string.
++ *
++ * Called from nsHttpChannel when it has the loadInfo available.
++ * If the channel is in a Space container, return the space's UA.
++ * Otherwise, return the default UA.
++ */
++const nsCString nsHttpHandler::GetUserAgentForContext(
++    uint32_t aUserContextId) {
++  const SpaceFingerprintProfile* profile =
++      nsRFPService::GetSpaceProfile(aUserContextId);
++
++  if (profile && !profile->userAgent.IsEmpty()) {
++    return profile->userAgent;
++  }
++
++  // Fall back to default UA
++  return mUserAgent;
++}
+
+
+# ADDITIONAL: Modify nsHttpChannel to use per-space UA
+#
+# File: netwerk/protocol/http/nsHttpChannel.cpp
+# Function: nsHttpChannel::SetupUserAgent() — line ~2800
+#
+# This is where the UA header is actually set on each HTTP request.
+# The channel has access to LoadInfo which contains OriginAttributes.
+
+--- a/netwerk/protocol/http/nsHttpChannel.cpp
++++ b/netwerk/protocol/http/nsHttpChannel.cpp
+@@ -2800,6 +2800,25 @@
+ nsresult nsHttpChannel::SetupUserAgent() {
+-  // Original: Just use the global UA
+-  nsAutoCString userAgent;
+-  gHttpHandler->UserAgent(userAgent);
++
++  // === SPACEBROWSER: Per-space User-Agent ===
++  nsAutoCString userAgent;
++
++  // Get the userContextId from this channel's load info
++  nsCOMPtr<nsILoadInfo> loadInfo = LoadInfo();
++  uint32_t userContextId = 0;
++
++  if (loadInfo) {
++    OriginAttributes attrs;
++    loadInfo->GetOriginAttributes(&attrs);
++    userContextId = attrs.mUserContextId;
++  }
++
++  if (userContextId > 0) {
++    // Check for per-space UA
++    userAgent = gHttpHandler->GetUserAgentForContext(userContextId);
++  } else {
++    // Use global UA
++    gHttpHandler->UserAgent(userAgent);
++  }
++  // === END SPACEBROWSER ===
+
+   mRequestHead.SetHeader(nsHttp::User_Agent, userAgent);
+   return NS_OK;
+ }
+
+
+# =============================================================================
+# FILE 7: dom/base/Navigator.cpp
+# =============================================================================
+#
+# WHAT IT DOES NOW:
+#   Implements the `navigator` JavaScript object. Properties like:
+#   - navigator.userAgent
+#   - navigator.platform
+#   - navigator.hardwareConcurrency
+#   - navigator.deviceMemory
+#   - navigator.oscpu (Firefox-specific)
+#
+#   When RFP is enabled, these return generic spoofed values:
+#   - platform: "Win32"
+#   - hardwareConcurrency: 2
+#   - deviceMemory: 8 (or undefined)
+#   - oscpu: "Windows NT 10.0; Win64; x64"
+#
+# WHERE TO FIND KEY FUNCTIONS:
+#   - Navigator::GetUserAgent() — line ~400
+#   - Navigator::GetPlatform() — line ~350
+#   - Navigator::HardwareConcurrency() — line ~1800
+#   - Navigator::GetOscpu() — line ~300
+#
+# WHAT WE CHANGE:
+#   Each getter checks for a per-space profile before falling back to
+#   global RFP values. The space profile provides realistic, consistent
+#   values that match the rest of the fingerprint (e.g., Windows platform
+#   gets Windows UA and Windows fonts).
+#
+
+--- a/dom/base/Navigator.cpp
++++ b/dom/base/Navigator.cpp
+@@ -30,6 +30,7 @@
++#include "nsRFPService.h"
+
++/**
++ * Helper: Get the userContextId for this Navigator's document.
++ *
++ * Every Navigator is associated with a Window, which has a Document,
++ * which has a Principal, which has OriginAttributes containing the
++ * userContextId. This helper extracts it.
++ */
++static uint32_t GetNavigatorUserContextId(Navigator* aNavigator) {
++  nsPIDOMWindowInner* window = aNavigator->GetWindow();
++  if (!window) return 0;
++
++  nsIDocument* doc = window->GetDoc();
++  if (!doc) return 0;
++
++  nsIPrincipal* principal = doc->NodePrincipal();
++  if (!principal) return 0;
++
++  return principal->OriginAttributesRef().mUserContextId;
++}
++
+
+ /**
+  * GetPlatform — returns navigator.platform
+  *
+  * Used by websites to detect the operating system.
+  * One of the most common fingerprinting vectors.
+  */
+ void Navigator::GetPlatform(nsAString& aPlatform, CallerType aCallerType,
+                              ErrorResult& aRv) const {
++
++  // === SPACEBROWSER: Per-space platform ===
++  uint32_t contextId = GetNavigatorUserContextId(
++      const_cast<Navigator*>(this));
++  const SpaceFingerprintProfile* profile =
++      nsRFPService::GetSpaceProfile(contextId);
++
++  if (profile && !profile->platform.IsEmpty()) {
++    CopyASCIItoUTF16(profile->platform, aPlatform);
++    return;
++  }
++  // === END SPACEBROWSER ===
+
+   // Original RFP check
+   if (nsRFPService::IsResistFingerprintingEnabled()) {
+     aPlatform.AssignLiteral("Win32");
+     return;
+   }
+   // ... existing platform detection code ...
+ }
+
+
+ /**
+  * GetUserAgent — returns navigator.userAgent
+  *
+  * The most-queried navigator property. Must match the HTTP User-Agent
+  * header for consistency (anti-detect tools check this).
+  */
+ void Navigator::GetUserAgent(nsAString& aUserAgent, CallerType aCallerType,
+                               ErrorResult& aRv) const {
++
++  // === SPACEBROWSER: Per-space User-Agent ===
++  uint32_t contextId = GetNavigatorUserContextId(
++      const_cast<Navigator*>(this));
++  const SpaceFingerprintProfile* profile =
++      nsRFPService::GetSpaceProfile(contextId);
++
++  if (profile && !profile->userAgent.IsEmpty()) {
++    CopyASCIItoUTF16(profile->userAgent, aUserAgent);
++    return;
++  }
++  // === END SPACEBROWSER ===
+
+   // Original code
+   // ...
+ }
+
+
+ /**
+  * HardwareConcurrency — returns navigator.hardwareConcurrency
+  *
+  * Reports the number of logical CPU cores. Strong fingerprint signal
+  * because most users have unique core counts.
+  *
+  * ORIGINAL RFP: Returns 2 (the minimum spec'd value)
+  * SPACEBROWSER: Returns a realistic value from the space's profile
+  */
+ uint64_t Navigator::HardwareConcurrency() {
++
++  // === SPACEBROWSER: Per-space hardware concurrency ===
++  uint32_t contextId = GetNavigatorUserContextId(this);
++  const SpaceFingerprintProfile* profile =
++      nsRFPService::GetSpaceProfile(contextId);
++
++  if (profile && profile->hardwareConcurrency > 0) {
++    return profile->hardwareConcurrency;
++  }
++  // === END SPACEBROWSER ===
+
+   // Original RFP behavior
+   if (nsRFPService::IsResistFingerprintingEnabled()) {
+     return 2;  // Generic minimum
+   }
+   // Return real value
+   return std::max(1, static_cast<int>(PR_GetNumberOfProcessors()));
+ }
+
+
+ /**
+  * GetOscpu — returns navigator.oscpu (Firefox-specific property)
+  *
+  * Reports the operating system and CPU architecture.
+  * E.g., "Windows NT 10.0; Win64; x64" or "Linux x86_64"
+  */
+ void Navigator::GetOscpu(nsAString& aOscpu, CallerType aCallerType,
+                           ErrorResult& aRv) const {
++
++  // === SPACEBROWSER: Per-space oscpu ===
++  uint32_t contextId = GetNavigatorUserContextId(
++      const_cast<Navigator*>(this));
++  const SpaceFingerprintProfile* profile =
++      nsRFPService::GetSpaceProfile(contextId);
++
++  if (profile && !profile->oscpu.IsEmpty()) {
++    CopyASCIItoUTF16(profile->oscpu, aOscpu);
++    return;
++  }
++  // === END SPACEBROWSER ===
+
+   if (nsRFPService::IsResistFingerprintingEnabled()) {
+     aOscpu.AssignLiteral("Windows NT 10.0; Win64; x64");
+     return;
+   }
+   // ... existing oscpu detection ...
+ }
+
+
+# =============================================================================
+# ADDITIONAL MODIFICATIONS NEEDED
+# =============================================================================
+#
+# The above 7 files are the core changes. Additionally:
+#
+# 1. dom/base/Screen.cpp
+#    - Modify Screen::GetWidth(), GetHeight(), GetAvailWidth(), GetAvailHeight()
+#    - Same pattern: check for space profile, return spoofed screen dimensions
+#    - Functions at approximately lines 100-200
+#
+# 2. dom/html/HTMLCanvasElement.cpp
+#    - Modify ToDataURL() and ToBlob() to apply per-space canvas noise
+#    - Same pattern as CanvasRenderingContext2D.cpp
+#
+# 3. toolkit/components/resistfingerprinting/RFPHelper.sys.mjs
+#    - This is the JS-side RFP helper that SpacesPanel can call
+#    - Add methods to bridge between SpaceIdentityService and nsRFPService
+#    - Call nsRFPService::RegisterSpaceProfile() when spaces change
+#
+# 4. Build system changes:
+#    - toolkit/components/resistfingerprinting/moz.build
+#      Add new source files, include paths
+#    - toolkit/components/contextualidentity/moz.build
+#      Add SpaceIdentityService module
+#    - browser/components/moz.build
+#      Add spaces/ subdirectory
+#
+# =============================================================================
+# BUILD SYSTEM CHANGES
+# =============================================================================
+
+--- a/toolkit/components/resistfingerprinting/moz.build
++++ b/toolkit/components/resistfingerprinting/moz.build
+@@ -15,6 +15,8 @@
+ UNIFIED_SOURCES += [
+     'nsRFPService.cpp',
++    # SpaceBrowser: Per-space fingerprint data is managed by nsRFPService
++    # No additional .cpp files needed — all in nsRFPService.cpp
+ ]
+
++# Include path for SpaceIdentityService bridge header
++LOCAL_INCLUDES += [
++    '/toolkit/components/contextualidentity',
++]
+
+--- a/browser/components/moz.build
++++ b/browser/components/moz.build
+@@ -40,6 +40,7 @@
+ DIRS += [
++    'spaces',          # SpaceBrowser: Spaces panel and toolbar button
+     'sessionstore',
+     'shell',
+     # ...
+ ]
+
+# New file: browser/components/spaces/moz.build
++EXTRA_JS_MODULES += [
++    'SpacesPanel.sys.mjs',
++    'SpacesToolbarButton.sys.mjs',
++]
++
++JAR_MANIFESTS += ['jar.mn']
+
+# New file: browser/components/spaces/jar.mn
++browser.jar:
++    content/browser/spaces/spaces-panel.xhtml    (spaces-panel.xhtml)
++    content/browser/spaces/spaces-panel.css       (spaces-panel.css)
+
+# =============================================================================
+# INTEGRATION FLOW SUMMARY
+# =============================================================================
+#
+# The data flow for per-space fingerprinting:
+#
+# 1. User creates a Space in the UI
+#    → SpaceIdentityService.create() in JS
+#    → Generates fingerprint profile (deterministic from UUID)
+#    → Stores in spaces.json
+#
+# 2. Space profile is pushed to C++ layer
+#    → RFPHelper.sys.mjs bridges JS → C++
+#    → Calls nsRFPService::RegisterSpaceProfile()
+#    → Profile cached in sSpaceProfiles map
+#
+# 3. Tab opens in a Space container
+#    → Tab's OriginAttributes.mUserContextId = space's userContextId
+#    → All code in that tab inherits these attributes
+#
+# 4. Fingerprinting-sensitive code runs
+#    → Canvas getImageData() called
+#    → Checks OriginAttributes → finds userContextId
+#    → Looks up SpaceFingerprintProfile
+#    → Applies per-space noise instead of global RFP
+#
+# 5. HTTP requests go out
+#    → nsHttpChannel gets loadInfo with OriginAttributes
+#    → Looks up per-space User-Agent
+#    → Sends space-specific headers
+#
+# This ensures complete isolation: each Space has its own fingerprint
+# across ALL vectors (canvas, WebGL, audio, navigator, UA, screen).
+# =============================================================================

@@ -1,0 +1,129 @@
+# =============================================================================
+# SpaceBrowser .mozconfig — Firefox Build Configuration
+# =============================================================================
+#
+# This file controls how Firefox is built. Place it at the root of your
+# mozilla-unified checkout as `.mozconfig`.
+#
+# Key customizations:
+#   - SpaceBrowser branding instead of Firefox
+#   - Contextual identities (containers) always enabled
+#   - All telemetry, crash reporting, and auto-update disabled
+#   - Pocket, Firefox Accounts, and other Mozilla services disabled
+#   - Optimized release build with debug symbols for profiling
+#
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Build target: Firefox Desktop
+# ---------------------------------------------------------------------------
+ac_add_options --enable-application=browser
+
+# ---------------------------------------------------------------------------
+# Branding: SpaceBrowser
+# ---------------------------------------------------------------------------
+# Points to browser/branding/spacebrowser/ which contains our icons,
+# brand names, and about dialog content.
+ac_add_options --with-branding=browser/branding/spacebrowser
+ac_add_options --with-app-name=spacebrowser
+ac_add_options --with-app-basename=SpaceBrowser
+
+# Custom distribution directory for our default prefs
+ac_add_options --with-distribution-id=org.spacebrowser
+
+# ---------------------------------------------------------------------------
+# Compiler and optimization
+# ---------------------------------------------------------------------------
+# Use clang for faster builds and better optimization
+export CC=clang
+export CXX=clang++
+
+# Use lld linker (much faster than GNU ld)
+ac_add_options --enable-linker=lld
+
+# Release-optimized build with PGO-like optimizations
+ac_add_options --enable-optimize="-O2"
+ac_add_options --enable-release
+
+# Include debug symbols (stripped in packaging, but useful for dev)
+ac_add_options --enable-debug-symbols
+
+# Disable debug assertions (release mode)
+ac_add_options --disable-debug
+
+# Enable Link-Time Optimization for release builds
+# Comment this out if builds are too slow or OOM
+ac_add_options --enable-lto=thin
+
+# ---------------------------------------------------------------------------
+# Features to ENABLE
+# ---------------------------------------------------------------------------
+# Contextual identities (containers) — the foundation of Spaces
+ac_add_options --enable-contextual-identity
+
+# WebRTC (needed for video calls, but we disable IP leak separately via prefs)
+ac_add_options --enable-webrtc
+
+# ---------------------------------------------------------------------------
+# Features to DISABLE — reduce attack surface and remove Mozilla tie-ins
+# ---------------------------------------------------------------------------
+# Telemetry — we don't report anything to Mozilla
+ac_add_options --disable-telemetry
+
+# Crash reporter — we'll build our own if needed
+ac_add_options --disable-crashreporter
+
+# Updater — we handle updates through our own distribution channel
+ac_add_options --disable-updater
+
+# Pocket integration — not needed
+ac_add_options --disable-pocket
+
+# Mozilla Maintenance Service (Windows-only updater service)
+ac_add_options --disable-maintenance-service
+
+# Background tasks (Windows scheduled tasks for updates)
+ac_add_options --disable-backgroundtasks
+
+# Normandy (Mozilla's remote experiment/pref-flip system)
+ac_add_options --disable-normandy
+
+# Default browser agent (Windows process that checks default browser)
+ac_add_options --disable-default-browser-agent
+
+# Firefox Accounts / Sync — we may add our own sync later
+# (Commenting out for now; can re-enable if we want to keep Sync)
+# ac_add_options --disable-fxaccounts
+
+# Tests (disable for faster builds; enable for CI)
+# ac_add_options --disable-tests
+
+# ---------------------------------------------------------------------------
+# Build parallelism
+# ---------------------------------------------------------------------------
+# Adjust based on your CPU cores. Rule of thumb: cores + 2
+# For a 8-core machine:
+mk_add_options MOZ_PARALLEL_BUILD=10
+
+# Use ccache if available (dramatically speeds up rebuilds)
+if command -v ccache &>/dev/null; then
+    ac_add_options --with-ccache=ccache
+fi
+
+# ---------------------------------------------------------------------------
+# Object directory
+# ---------------------------------------------------------------------------
+# Build artifacts go here. Keeps source tree clean.
+mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-spacebrowser
+
+# ---------------------------------------------------------------------------
+# Custom defines for SpaceBrowser
+# ---------------------------------------------------------------------------
+# These preprocessor defines let our code detect it's running as SpaceBrowser
+# rather than vanilla Firefox
+export MOZ_APP_DISPLAYNAME="SpaceBrowser"
+export MOZ_MACBUNDLE_NAME="SpaceBrowser.app"
+
+# Define that enables our per-space fingerprinting code paths
+ac_add_options --define=SPACEBROWSER
+ac_add_options --define=SPACEBROWSER_SPACES_ENABLED

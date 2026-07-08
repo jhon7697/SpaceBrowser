@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SpaceBrowser</string>
+    <string name="spaces_title">🚀 Spaces</string>
+    <string name="new_space">New Space</string>
+    <string name="create_space">Create Space</string>
+    <string name="delete_space">Delete Space</string>
+    <string name="space_name_hint">e.g., Work, Shopping, Social</string>
+    <string name="no_space">No Space</string>
+    <string name="search_or_url">Search or enter URL</string>
+    <string name="tab_count">%d tab(s)</string>
+    <string name="spaces_count">%d spaces</string>
+    <string name="space_deleted">Space deleted</string>
+    <string name="space_created">Space created</string>
+    <string name="empty_name_error">Name cannot be empty</string>
+    <string name="max_spaces_error">Maximum number of spaces reached</string>
+    <string name="back">Back</string>
+    <string name="forward">Forward</string>
+    <string name="reload">Reload</string>
+    <string name="new_tab">New Tab</string>
+    <string name="tabs">Tabs</string>
+    <string name="spaces">Spaces</string>
+</resources>

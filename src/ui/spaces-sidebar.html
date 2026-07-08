@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpaceBrowser</title>
+  <link rel="stylesheet" href="spaces-sidebar.css">
+</head>
+<body>
+  <div class="sidebar">
+    <!-- Header -->
+    <div class="header">
+      <h1>🚀 Spaces</h1>
+      <button id="btn-add" class="btn-icon" title="New Space">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Space List -->
+    <div id="space-list" class="space-list">
+      <!-- Spaces rendered here by JS -->
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="empty-state" style="display:none;">
+      <p>No spaces yet</p>
+      <button id="btn-create-first" class="btn-primary">Create First Space</button>
+    </div>
+
+    <!-- Create Space Dialog -->
+    <div id="create-dialog" class="dialog" style="display:none;">
+      <div class="dialog-content">
+        <h3>New Space</h3>
+        <input type="text" id="space-name-input" placeholder="Space name" maxlength="32" autofocus>
+        <div class="color-picker" id="color-picker">
+          <span class="color-dot" data-color="blue" style="background:#37adff;"></span>
+          <span class="color-dot" data-color="turquoise" style="background:#00c79a;"></span>
+          <span class="color-dot" data-color="green" style="background:#51cd00;"></span>
+          <span class="color-dot" data-color="yellow" style="background:#ffcb00;"></span>
+          <span class="color-dot" data-color="orange" style="background:#ff9f00;"></span>
+          <span class="color-dot" data-color="red" style="background:#ff613d;"></span>
+          <span class="color-dot" data-color="pink" style="background:#ff4bda;"></span>
+          <span class="color-dot" data-color="purple" style="background:#af51f5;"></span>
+        </div>
+        <div class="dialog-actions">
+          <button id="btn-cancel" class="btn-secondary">Cancel</button>
+          <button id="btn-confirm" class="btn-primary">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <span class="version">SpaceBrowser v0.1.0</span>
+    </div>
+  </div>
+
+  <script src="spaces-sidebar.js"></script>
+</body>
+</html>

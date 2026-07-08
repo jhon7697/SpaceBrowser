@@ -1,0 +1,31 @@
+{
+  "name": "spacebrowser",
+  "version": "0.1.0",
+  "description": "Fully isolated browsing spaces with unique anti-fingerprinting per space. Built on Firefox/GeckoView.",
+  "private": true,
+  "scripts": {
+    "dev": "web-ext run --source-dir . --firefox=firefox --browser-console",
+    "dev:nightly": "web-ext run --source-dir . --firefox=firefox-nightly --browser-console",
+    "build": "web-ext build --source-dir . --overwrite-dest",
+    "lint": "web-ext lint --source-dir .",
+    "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "clean": "rm -rf web-ext-artifacts"
+  },
+  "devDependencies": {
+    "web-ext": "^7.11.0",
+    "jest": "^29.7.0",
+    "@jest/globals": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "firefox",
+    "browser",
+    "privacy",
+    "anti-fingerprint",
+    "containers",
+    "isolation"
+  ],
+  "license": "MIT"
+}

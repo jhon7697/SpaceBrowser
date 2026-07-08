@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ═══ Theme Colors ═══ -->
+    <color name="background">#1A1A2E</color>
+    <color name="surface">#16213E</color>
+    <color name="surface_variant">#0F3460</color>
+    <color name="accent">#E94560</color>
+    <color name="accent_dark">#C23152</color>
+
+    <!-- ═══ Text Colors ═══ -->
+    <color name="text_primary">#EEEEEE</color>
+    <color name="text_secondary">#AAAABB</color>
+    <color name="text_muted">#666677</color>
+    <color name="white">#FFFFFF</color>
+
+    <!-- ═══ Space Colors (match desktop) ═══ -->
+    <color name="space_blue">#37ADFF</color>
+    <color name="space_turquoise">#00C79A</color>
+    <color name="space_green">#51CD00</color>
+    <color name="space_yellow">#FFCB00</color>
+    <color name="space_orange">#FF9F00</color>
+    <color name="space_red">#FF613D</color>
+    <color name="space_pink">#FF4BDA</color>
+    <color name="space_purple">#AF51F5</color>
+
+    <!-- ═══ Status Colors ═══ -->
+    <color name="success">#51CD00</color>
+    <color name="danger">#FF613D</color>
+    <color name="warning">#FFCB00</color>
+</resources>

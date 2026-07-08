@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
+<!--
+  SpaceBrowser — Spaces Panel XHTML
+
+  This is the panel that opens when the user clicks the Spaces toolbar button.
+  It contains the space list, create form, and management controls.
+
+  Location in Firefox source: browser/components/spaces/spaces-panel.xhtml
+  Referenced from: SpacesPanel.sys.mjs
+  Loaded as: chrome://browser/content/spaces/spaces-panel.xhtml
+
+  Firefox chrome UI uses a mix of XUL and HTML elements. We use HTML inside
+  a XUL <panel> for modern layout capabilities (flexbox, grid).
+-->
+
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:xul="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+
+<head>
+  <meta charset="utf-8"/>
+  <link rel="stylesheet" href="chrome://browser/content/spaces/spaces-panel.css"/>
+</head>
+
+<body id="spaces-panel-body">
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- PANEL HEADER                                            -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="spaces-panel-header" class="spaces-header">
+    <h2 class="spaces-title">🚀 Spaces</h2>
+    <div class="spaces-header-actions">
+      <button id="spaces-import-btn"
+              class="spaces-btn spaces-btn-icon"
+              title="Import Spaces"
+              data-l10n-id="spaces-import-button">
+        <!-- Import icon (arrow-down-to-bracket) -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+      </button>
+      <button id="spaces-export-btn"
+              class="spaces-btn spaces-btn-icon"
+              title="Export Spaces"
+              data-l10n-id="spaces-export-button">
+        <!-- Export icon (arrow-up-from-bracket) -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </button>
+      <button id="spaces-create-btn"
+              class="spaces-btn spaces-btn-primary"
+              title="Create New Space"
+              data-l10n-id="spaces-create-button">
+        <!-- Plus icon -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        <span>New Space</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- SPACE LIST                                              -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="spaces-list" class="spaces-list">
+    <!-- Space cards are rendered here dynamically by SpacesPanel.sys.mjs -->
+    <!--
+      Each space card follows this template:
+
+      <div class="space-card [active]" data-space-id="UUID">
+        <div class="space-color-dot" style="background: COLOR;"></div>
+        <div class="space-info">
+          <span class="space-name">NAME</span>
+          <span class="space-meta">
+            <span class="space-tab-count">N tabs</span>
+            <span class="space-fingerprint-id">🔑 SHORTID</span>
+          </span>
+        </div>
+        <div class="space-actions">
+          <button class="space-action-btn" data-action="new-tab">+</button>
+          <button class="space-action-btn" data-action="menu">⋯</button>
+        </div>
+      </div>
+    -->
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- EMPTY STATE                                             -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="spaces-empty" class="spaces-empty" hidden="true">
+    <div class="spaces-empty-icon">🚀</div>
+    <p class="spaces-empty-text" data-l10n-id="spaces-empty-label">
+      No spaces yet. Create your first fully isolated space.
+    </p>
+    <button id="spaces-create-first-btn"
+            class="spaces-btn spaces-btn-primary spaces-btn-large"
+            data-l10n-id="spaces-create-first-button">
+      Create First Space
+    </button>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- CREATE SPACE FORM (hidden by default)                   -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="spaces-create-form" class="spaces-create-form" hidden="true">
+    <h3 data-l10n-id="spaces-create-heading">New Space</h3>
+
+    <div class="spaces-form-group">
+      <label for="spaces-name-input" data-l10n-id="spaces-name-label">Name</label>
+      <input id="spaces-name-input"
+             type="text"
+             class="spaces-input"
+             placeholder="e.g., Work, Shopping, Social"
+             maxlength="64"
+             data-l10n-id="spaces-name-input"/>
+    </div>
+
+    <div class="spaces-form-group">
+      <label data-l10n-id="spaces-color-label">Color</label>
+      <div id="spaces-color-picker" class="spaces-color-picker">
+        <button class="spaces-color-swatch selected" data-color="blue"
+                style="background: #37adff;" title="Blue"></button>
+        <button class="spaces-color-swatch" data-color="turquoise"
+                style="background: #00c79a;" title="Turquoise"></button>
+        <button class="spaces-color-swatch" data-color="green"
+                style="background: #51cd00;" title="Green"></button>
+        <button class="spaces-color-swatch" data-color="yellow"
+                style="background: #ffcb00;" title="Yellow"></button>
+        <button class="spaces-color-swatch" data-color="orange"
+                style="background: #ff9f00;" title="Orange"></button>
+        <button class="spaces-color-swatch" data-color="red"
+                style="background: #ff613d;" title="Red"></button>
+        <button class="spaces-color-swatch" data-color="pink"
+                style="background: #ff4bda;" title="Pink"></button>
+        <button class="spaces-color-swatch" data-color="purple"
+                style="background: #af51f5;" title="Purple"></button>
+      </div>
+    </div>
+
+    <div class="spaces-form-group">
+      <label data-l10n-id="spaces-proxy-label">Proxy (optional)</label>
+      <div class="spaces-proxy-row">
+        <select id="spaces-proxy-type" class="spaces-select">
+          <option value="direct" selected="selected">No Proxy</option>
+          <option value="http">HTTP</option>
+          <option value="https">HTTPS</option>
+          <option value="socks5">SOCKS5</option>
+          <option value="socks4">SOCKS4</option>
+        </select>
+        <input id="spaces-proxy-host"
+               type="text"
+               class="spaces-input spaces-proxy-input"
+               placeholder="host:port"
+               disabled="true"/>
+      </div>
+    </div>
+
+    <div class="spaces-form-actions">
+      <button id="spaces-cancel-btn"
+              class="spaces-btn spaces-btn-secondary"
+              data-l10n-id="spaces-cancel-button">
+        Cancel
+      </button>
+      <button id="spaces-confirm-btn"
+              class="spaces-btn spaces-btn-primary"
+              data-l10n-id="spaces-confirm-button">
+        Create Space
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- CONTEXT MENU (right-click on a space)                   -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <xul:menupopup id="spaces-context-menu">
+    <xul:menuitem id="spaces-ctx-switch"
+                  label="Switch to Space"
+                  data-l10n-id="spaces-ctx-switch"/>
+    <xul:menuitem id="spaces-ctx-new-tab"
+                  label="New Tab in Space"
+                  data-l10n-id="spaces-ctx-new-tab"/>
+    <xul:menuseparator/>
+    <xul:menuitem id="spaces-ctx-rename"
+                  label="Rename Space"
+                  data-l10n-id="spaces-ctx-rename"/>
+    <xul:menuitem id="spaces-ctx-change-color"
+                  label="Change Color"
+                  data-l10n-id="spaces-ctx-change-color"/>
+    <xul:menuitem id="spaces-ctx-regenerate-fp"
+                  label="Regenerate Fingerprint"
+                  data-l10n-id="spaces-ctx-regenerate-fp"/>
+    <xul:menuseparator/>
+    <xul:menuitem id="spaces-ctx-export"
+                  label="Export Space"
+                  data-l10n-id="spaces-ctx-export"/>
+    <xul:menuseparator/>
+    <xul:menuitem id="spaces-ctx-delete"
+                  label="Delete Space"
+                  class="spaces-ctx-danger"
+                  data-l10n-id="spaces-ctx-delete"/>
+  </xul:menupopup>
+
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <!-- PANEL FOOTER                                            -->
+  <!-- ═══════════════════════════════════════════════════════ -->
+  <div id="spaces-panel-footer" class="spaces-footer">
+    <span class="spaces-footer-info" id="spaces-count">0 spaces</span>
+    <span class="spaces-footer-version">SpaceBrowser v0.1.0</span>
+  </div>
+
+</body>
+</html>
