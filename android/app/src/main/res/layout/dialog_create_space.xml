@@ -35,6 +35,7 @@
         android:id="@+id/color_chip_group"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:singleSelection="true"/>
+        app:singleSelection="true"
+        xmlns:app="http://schemas.android.com/apk/res-auto"/>
 
 </LinearLayout>
