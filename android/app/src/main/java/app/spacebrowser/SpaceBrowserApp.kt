@@ -2,7 +2,6 @@ package app.spacebrowser
 
 import android.app.Application
 import android.util.Log
-import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
 
@@ -15,33 +14,25 @@ class SpaceBrowserApp : Application() {
         private var sRuntime: GeckoRuntime? = null
 
         fun getRuntime(): GeckoRuntime {
-            return sRuntime ?: throw IllegalStateException(
-                "GeckoRuntime not initialized"
-            )
+            return sRuntime ?: throw IllegalStateException("GeckoRuntime not initialized")
         }
+
+        fun isRuntimeReady(): Boolean = sRuntime != null
     }
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "Initializing SpaceBrowser...")
+        try {
+            Log.i(TAG, "Initializing GeckoRuntime...")
+            val settings = GeckoRuntimeSettings.Builder()
+                .remoteDebuggingEnabled(BuildConfig.DEBUG)
+                .consoleOutput(BuildConfig.DEBUG)
+                .build()
 
-        val settings = GeckoRuntimeSettings.Builder()
-            .contentBlocking(
-                ContentBlocking.Settings.Builder()
-                    .antiTracking(
-                        ContentBlocking.AntiTracking.DEFAULT or
-                        ContentBlocking.AntiTracking.CRYPTOMINING or
-                        ContentBlocking.AntiTracking.FINGERPRINTING
-                    )
-                    .cookieBehavior(ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS)
-                    .strictSocialTrackingProtection(true)
-                    .build()
-            )
-            .remoteDebuggingEnabled(BuildConfig.DEBUG)
-            .consoleOutput(BuildConfig.DEBUG)
-            .build()
-
-        sRuntime = GeckoRuntime.create(this, settings)
-        Log.i(TAG, "GeckoRuntime initialized")
+            sRuntime = GeckoRuntime.create(this, settings)
+            Log.i(TAG, "GeckoRuntime initialized successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize GeckoRuntime", e)
+        }
     }
 }

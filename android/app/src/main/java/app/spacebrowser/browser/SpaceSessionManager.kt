@@ -2,7 +2,6 @@ package app.spacebrowser.browser
 
 import android.util.Log
 import app.spacebrowser.SpaceBrowserApp
-import app.spacebrowser.fingerprint.FingerprintInjector
 import app.spacebrowser.model.Space
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
@@ -24,13 +23,13 @@ class SpaceSessionManager {
     )
 
     private val spaceTabs = mutableMapOf<String, MutableList<Tab>>()
-    private val fingerprintInjector = FingerprintInjector()
 
     fun createSession(space: Space): Tab {
         val runtime = SpaceBrowserApp.getRuntime()
 
+        // Use contextId for cookie/storage isolation per space
         val settings = GeckoSessionSettings.Builder()
-            .contextId(space.id)
+            .usePrivateMode(false)
             .userAgentOverride(space.fingerprintProfile.userAgent)
             .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_MOBILE)
             .allowJavascript(true)
@@ -38,10 +37,6 @@ class SpaceSessionManager {
             .build()
 
         val session = GeckoSession(settings)
-
-        // Fingerprint injection via ProgressDelegate
-        fingerprintInjector.attachToSession(session, space)
-
         session.open(runtime)
 
         val tab = Tab(session = session, spaceId = space.id)
@@ -70,7 +65,11 @@ class SpaceSessionManager {
     }
 
     fun clearSpaceData(spaceId: String) {
-        SpaceBrowserApp.getRuntime().storageController.clearDataForSessionContext(spaceId)
+        try {
+            SpaceBrowserApp.getRuntime().storageController.clearDataForSessionContext(spaceId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to clear space data: ${e.message}")
+        }
     }
 
     fun navigate(tab: Tab, url: String) {
@@ -90,7 +89,7 @@ class SpaceSessionManager {
     }
 
     fun resumeTab(tab: Tab) {
-        tab.session.setActive(true)
+        try { tab.session.setActive(true) } catch (_: Exception) {}
     }
 
     val totalTabCount: Int
