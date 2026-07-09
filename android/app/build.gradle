@@ -48,7 +48,7 @@ android {
 
 dependencies {
     // GeckoView — Mozilla's embeddable Gecko engine
-    implementation "org.mozilla.geckoview:geckoview-omni:128.0.20240701000000"
+    implementation "org.mozilla.geckoview:geckoview:152.0.20260706120035"
 
     // Material Design 3
     implementation "com.google.android.material:material:1.11.0"
